@@ -241,6 +241,84 @@
       </tags>
   </entry>
   <entry>
+    <title>Redis字典dict要定义两个哈希表的原因</title>
+    <url>/2020/01/22/Redis%E5%AD%97%E5%85%B8dict%E8%A6%81%E5%AE%9A%E4%B9%89%E4%B8%A4%E4%B8%AA%E5%93%88%E5%B8%8C%E8%A1%A8%E7%9A%84%E5%8E%9F%E5%9B%A0/</url>
+    <content><![CDATA[<h3 id="Redis-字典-dict-要定义两个哈希表的原因"><a href="#Redis-字典-dict-要定义两个哈希表的原因" class="headerlink" title="Redis 字典 dict 要定义两个哈希表的原因"></a>Redis 字典 dict 要定义两个哈希表的原因</h3><p>Redis 字典 dict 定义两个哈希表是为了给哈希表进行扩展或者收缩准备的</p>
+<h3 id="为什么-Redis-字典-dict-中的哈希表要扩展或者收缩"><a href="#为什么-Redis-字典-dict-中的哈希表要扩展或者收缩" class="headerlink" title="为什么 Redis 字典 dict 中的哈希表要扩展或者收缩"></a>为什么 Redis 字典 dict 中的哈希表要扩展或者收缩</h3><p>因为随着操作的不断执行，哈希表保存的键值对的逐渐增加或者减少，为了让哈希表负载因子（load factor）维持在一个合理的范围之内，当哈希表保存的键值对过多或者过少时，程序需要对哈希表的大小执行相应的扩展或者收缩</p>
+<h3 id="Redis-字典-dict-如何实现哈希表的扩展和收缩"><a href="#Redis-字典-dict-如何实现哈希表的扩展和收缩" class="headerlink" title="Redis 字典 dict 如何实现哈希表的扩展和收缩"></a>Redis 字典 dict 如何实现哈希表的扩展和收缩</h3><p>扩张和收缩哈希表的工作是通过执行 rehash （重新散列）操作来完成，Redis 对字典 dict 的哈希表执行 rehash 的步骤如下：</p>
+<ol>
+<li>为字典的 ht[1] 哈希表分配空间，这个哈希表的空间大小取决于要执行的操作是扩展还是收缩决，以及 ht[0] 包含键值对的数量 （ht[0].used 的值）：<ul>
+<li>如果执行的是扩展操作，那么 ht[1] 的大小为第一个大于等于 ht[0].used * 2 的 2 ^ n （2 的 n 次方幂）</li>
+<li>如果执行的是收缩操作，那么 ht[1] 的大小为第一个大于等于 ht[0].used 的 2 ^ n</li>
+</ul>
+</li>
+<li>将保存在 ht[0] 中的所有键值对 rehash 到 ht[1] 上面：rehash 指的是重新计算键的哈希值和索引值，然后将键值对放置到 ht[1] 哈希表中索引值对应位置上</li>
+<li>当 ht[0] 包含的所有键值对都迁移到了 ht[1] 之后（ht[0] 变为空表），释放 ht[0] ，将 ht[1] 设置为 ht[0] ，并在 ht[1] 新创建一个空白哈希表，为下一次 rehash 做准备</li>
+</ol>
+<span id="more"></span>
+<p>举个例子，假设程序要对下图所示的字典的 ht[0] 进行扩展操作，那么程序执行以下步骤：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/1abf039c-703b-5fde-b67f-c97fe9e3273b.png" alt="图片丢失" title="图1"></p>
+<ol>
+<li><p>ht[0].used 当前的值为 4， 4 * 2 = 8 ，而 8 （2 ^ 3） 恰好是第一个大于等于 8 的 2 的 n 次方，所以程序会将 ht[1] 哈希表的大小设置为 8，下图是为 ht[1] 在分配空间之后字典的样子</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/5fbf2db9-21a4-50b7-9dbd-3f78db2da4de.png" alt="图片丢失" title="图2"></p>
+</li>
+<li><p>将保存在 ht[0] 包含的四个键值对都 rehash 到 ht[1]，如下图</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/31ed5ffe-6b5e-5d6d-bfbb-53899e9c5ad9.png" alt="图片丢失" title="图3"></p>
+</li>
+<li><p>释放 ht[0]，并将 ht[1] 设置为 ht[0]，然后为 ht[1] 分配一个空白的哈希表，如下图</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/cb035281-bd11-5778-96e9-c3699b427ea2.png" alt="图片丢失" title="图4"></p>
+</li>
+</ol>
+<p>到此，对哈希表的扩张操作执行完毕，程序成功将哈希表的大小从原来的 4 扩展为 8</p>
+<h3 id="哈希表扩展和收缩的触发条件"><a href="#哈希表扩展和收缩的触发条件" class="headerlink" title="哈希表扩展和收缩的触发条件"></a>哈希表扩展和收缩的触发条件</h3><h4 id="哈希表扩展"><a href="#哈希表扩展" class="headerlink" title="哈希表扩展"></a>哈希表扩展</h4><p>当以下条件中的任意一个被满足时，程序和自动开始对哈希表执行扩展</p>
+<ol>
+<li>服务器目前没有执行 BGSAVE 或者 BGREWRITEAOF 命令，并且哈希表的负载因子大于等于 1；</li>
+<li>服务器目前正在执行 BGSAVE 或者 BGREWRITEAOF 命令，并且哈希表的负载因子大于等于 5；</li>
+</ol>
+<h4 id="哈希表的收缩"><a href="#哈希表的收缩" class="headerlink" title="哈希表的收缩"></a>哈希表的收缩</h4><p>当哈希表的负载因子小于 0.1 时，程序会自动开始对哈希表进行收缩</p>
+<p>哈希表的负载因子的计算公式如下：</p>
+<figure class="highlight c"><table><tr><td class="code"><pre><span class="line">load_factor = ht[<span class="number">0</span>].used / ht[<span class="number">0</span>].size</span><br></pre></td></tr></table></figure>
+<p>根据 BGSAVE 命令或者 BGREWRITEAOF 命令是否正在执行，服务器执行执行操作所需的负载因子并不相同，这是因为正在执行 BGSAVE 或者 BGREWRITEAOF 命令的过程中，Redis 需要创建当前服务进程的子进程，而大多数操作系统都采用写时复制技术来优化进程的使用效率，所以子进程存在的期间，服务器会提高执行扩展操作所需要的负载因子，从而尽量地避免在子进程存在期间进行哈希表扩展操作，这可以避免不必要的内存写入操作，最大限度地节约内存</p>
+]]></content>
+      <categories>
+        <category>redis</category>
+      </categories>
+      <tags>
+        <tag>redis</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>SpringSecurity中的SecurityContextHolder分析</title>
+    <url>/2022/03/31/SpringSecurity%E4%B8%AD%E7%9A%84SecurityContextHolder%E5%88%86%E6%9E%90/</url>
+    <content><![CDATA[<h3 id="SpringSecurity-中的-SecurityContextHolder-分析"><a href="#SpringSecurity-中的-SecurityContextHolder-分析" class="headerlink" title="SpringSecurity 中的 SecurityContextHolder 分析"></a>SpringSecurity 中的 SecurityContextHolder 分析</h3><h4 id="分析"><a href="#分析" class="headerlink" title="分析"></a>分析</h4><p>一般我们在 SpringSecurity 中可以通过 SecurityContextHolder.getContext().getAuthentication()获取到认证信息，这个认证信息就是存放在 SecurityContext 中，这个 SecurityContext 就是通过 SecurityContextHolder.getContext()获取到的，SecurityContextHolder.getContext()的代码如下</p>
+<figure class="highlight java"><table><tr><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="keyword">static</span> SecurityContext <span class="title function_">getContext</span><span class="params">()</span> &#123;</span><br><span class="line">  <span class="keyword">return</span> strategy.getContext();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<span id="more"></span>
+<p>上面的这个 strategy 是根据具体的策略来确定到底从哪获取 SecurityContext，这个 strategy 的初始化代码</p>
+<figure class="highlight java"><table><tr><td class="code"><pre><span class="line"><span class="keyword">static</span> &#123;</span><br><span class="line">  initialize();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title function_">initialize</span><span class="params">()</span> &#123;</span><br><span class="line">  <span class="keyword">if</span> (!StringUtils.hasText(strategyName)) &#123;</span><br><span class="line">    <span class="comment">// Set default</span></span><br><span class="line">    <span class="comment">//默认的策略是从ThreadLocal中获取，可以通过在SecurityContextHolder.setStrategyName()方法设置</span></span><br><span class="line">    strategyName = MODE_THREADLOCAL;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="comment">//默认的策略是从ThreadLocal中获取</span></span><br><span class="line">  <span class="keyword">if</span> (strategyName.equals(MODE_THREADLOCAL)) &#123;</span><br><span class="line">    strategy = <span class="keyword">new</span> <span class="title class_">ThreadLocalSecurityContextHolderStrategy</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="comment">//可继承的ThreadLocal</span></span><br><span class="line">  <span class="keyword">else</span> <span class="keyword">if</span> (strategyName.equals(MODE_INHERITABLETHREADLOCAL)) &#123;</span><br><span class="line">    strategy = <span class="keyword">new</span> <span class="title class_">InheritableThreadLocalSecurityContextHolderStrategy</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="comment">//全局模式</span></span><br><span class="line">  <span class="keyword">else</span> <span class="keyword">if</span> (strategyName.equals(MODE_GLOBAL)) &#123;</span><br><span class="line">    strategy = <span class="keyword">new</span> <span class="title class_">GlobalSecurityContextHolderStrategy</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">else</span> &#123;</span><br><span class="line">    <span class="comment">// Try to load a custom strategy</span></span><br><span class="line">    <span class="keyword">try</span> &#123;</span><br><span class="line">      Class&lt;?&gt; clazz = Class.forName(strategyName);</span><br><span class="line">      Constructor&lt;?&gt; customStrategy = clazz.getConstructor();</span><br><span class="line">      strategy = (SecurityContextHolderStrategy) customStrategy.newInstance();</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">catch</span> (Exception ex) &#123;</span><br><span class="line">      ReflectionUtils.handleReflectionException(ex);</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  initializeCount++;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>ThreadLocal 模式下的使用的是 ThreadLocalSecurityContextHolderStrategy 这个类的对象来存储 SecurityContext</p>
+<figure class="highlight java"><table><tr><td class="code"><pre><span class="line"><span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">ThreadLocalSecurityContextHolderStrategy</span> <span class="keyword">implements</span></span><br><span class="line">    <span class="title class_">SecurityContextHolderStrategy</span> &#123;</span><br><span class="line">  <span class="comment">// ~ Static fields/initializers</span></span><br><span class="line">  <span class="comment">// =====================================================================================</span></span><br><span class="line"></span><br><span class="line">  <span class="comment">//使用ThreadLocal来存储，在同一个线程中可以获取得到（不了解ThredLocal的使用可以上网查一下）</span></span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> ThreadLocal&lt;SecurityContext&gt; contextHolder = <span class="keyword">new</span> <span class="title class_">ThreadLocal</span>&lt;&gt;();</span><br><span class="line"></span><br><span class="line">  <span class="comment">// ~ Methods</span></span><br><span class="line">  <span class="comment">// ========================================================================================================</span></span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">clearContext</span><span class="params">()</span> &#123;</span><br><span class="line">    contextHolder.remove();</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> SecurityContext <span class="title function_">getContext</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="type">SecurityContext</span> <span class="variable">ctx</span> <span class="operator">=</span> contextHolder.get();</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (ctx == <span class="literal">null</span>) &#123;</span><br><span class="line">      ctx = createEmptyContext();</span><br><span class="line">      contextHolder.set(ctx);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> ctx;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">setContext</span><span class="params">(SecurityContext context)</span> &#123;</span><br><span class="line">    Assert.notNull(context, <span class="string">&quot;Only non-null SecurityContext instances are permitted&quot;</span>);</span><br><span class="line">    contextHolder.set(context);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> SecurityContext <span class="title function_">createEmptyContext</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">SecurityContextImpl</span>();</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>接下来再看下全局模式对应的 GlobalSecurityContextHolderStrategy 的代码</p>
+<figure class="highlight java"><table><tr><td class="code"><pre><span class="line"><span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">GlobalSecurityContextHolderStrategy</span> <span class="keyword">implements</span> <span class="title class_">SecurityContextHolderStrategy</span> &#123;</span><br><span class="line">  <span class="comment">// ~ Static fields/initializers</span></span><br><span class="line">  <span class="comment">// =====================================================================================</span></span><br><span class="line">  <span class="comment">//直接使用静态变量存储，所有线程获取到的都是同一个东西</span></span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">static</span> SecurityContext contextHolder;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// ~ Methods</span></span><br><span class="line">  <span class="comment">// ========================================================================================================</span></span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">clearContext</span><span class="params">()</span> &#123;</span><br><span class="line">    contextHolder = <span class="literal">null</span>;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> SecurityContext <span class="title function_">getContext</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="keyword">if</span> (contextHolder == <span class="literal">null</span>) &#123;</span><br><span class="line">      contextHolder = <span class="keyword">new</span> <span class="title class_">SecurityContextImpl</span>();</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> contextHolder;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">setContext</span><span class="params">(SecurityContext context)</span> &#123;</span><br><span class="line">    Assert.notNull(context, <span class="string">&quot;Only non-null SecurityContext instances are permitted&quot;</span>);</span><br><span class="line">    contextHolder = context;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> SecurityContext <span class="title function_">createEmptyContext</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">SecurityContextImpl</span>();</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>那个可继承 ThreadLocal 用得比较少，应该和和上面的 ThradLocal 差不多，感兴趣的可以去网上查一下，这里就不分析了</p>
+<h4 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h4><ul>
+<li>SecurityContextHolder 的作用是保存 SecurityContext</li>
+<li>SecurityContextHolder 默认使用的是 ThreadLocal 模式来保存 SecurityContext，在这种模式下同一个线程获取到 SecurityContext 都是一样的，如果是全局模式下，所有的线程获取到的 SecurityContext 都是同一个，如果需要使用其它模式可以通过调用 SecurityContextHolder.setStrategyName 方法来设置</li>
+</ul>
+]]></content>
+      <categories>
+        <category>java</category>
+        <category>Spring</category>
+        <category>SpringBoot</category>
+        <category>SpringSecurity</category>
+      </categories>
+      <tags>
+        <tag>java</tag>
+        <tag>Spring</tag>
+        <tag>SpringBoot</tag>
+        <tag>SpringSecurity</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Javaweb从web.xml 到 springboot</title>
     <url>/2022/01/21/Javaweb%E4%BB%8Eweb.xml%20%E5%88%B0%20springboot/</url>
     <content><![CDATA[<h3 id="Javaweb-从-web-xml-到-springboot"><a href="#Javaweb-从-web-xml-到-springboot" class="headerlink" title="Javaweb 从 web.xml 到 springboot"></a>Javaweb 从 web.xml 到 springboot</h3><h4 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h4><p>这篇文章依然是参考了<a href="https://www.cnkirito.moe/servlet-explore/#Initializer-%E8%A2%AB%E6%9B%BF%E6%8D%A2%E4%B8%BA-TomcatStarter">这位大佬的文章</a>，讲得已经非常细了，真的非常建议去看下大佬的文章。</p>
@@ -436,84 +514,6 @@
       </tags>
   </entry>
   <entry>
-    <title>Redis字典dict要定义两个哈希表的原因</title>
-    <url>/2020/01/22/Redis%E5%AD%97%E5%85%B8dict%E8%A6%81%E5%AE%9A%E4%B9%89%E4%B8%A4%E4%B8%AA%E5%93%88%E5%B8%8C%E8%A1%A8%E7%9A%84%E5%8E%9F%E5%9B%A0/</url>
-    <content><![CDATA[<h3 id="Redis-字典-dict-要定义两个哈希表的原因"><a href="#Redis-字典-dict-要定义两个哈希表的原因" class="headerlink" title="Redis 字典 dict 要定义两个哈希表的原因"></a>Redis 字典 dict 要定义两个哈希表的原因</h3><p>Redis 字典 dict 定义两个哈希表是为了给哈希表进行扩展或者收缩准备的</p>
-<h3 id="为什么-Redis-字典-dict-中的哈希表要扩展或者收缩"><a href="#为什么-Redis-字典-dict-中的哈希表要扩展或者收缩" class="headerlink" title="为什么 Redis 字典 dict 中的哈希表要扩展或者收缩"></a>为什么 Redis 字典 dict 中的哈希表要扩展或者收缩</h3><p>因为随着操作的不断执行，哈希表保存的键值对的逐渐增加或者减少，为了让哈希表负载因子（load factor）维持在一个合理的范围之内，当哈希表保存的键值对过多或者过少时，程序需要对哈希表的大小执行相应的扩展或者收缩</p>
-<h3 id="Redis-字典-dict-如何实现哈希表的扩展和收缩"><a href="#Redis-字典-dict-如何实现哈希表的扩展和收缩" class="headerlink" title="Redis 字典 dict 如何实现哈希表的扩展和收缩"></a>Redis 字典 dict 如何实现哈希表的扩展和收缩</h3><p>扩张和收缩哈希表的工作是通过执行 rehash （重新散列）操作来完成，Redis 对字典 dict 的哈希表执行 rehash 的步骤如下：</p>
-<ol>
-<li>为字典的 ht[1] 哈希表分配空间，这个哈希表的空间大小取决于要执行的操作是扩展还是收缩决，以及 ht[0] 包含键值对的数量 （ht[0].used 的值）：<ul>
-<li>如果执行的是扩展操作，那么 ht[1] 的大小为第一个大于等于 ht[0].used * 2 的 2 ^ n （2 的 n 次方幂）</li>
-<li>如果执行的是收缩操作，那么 ht[1] 的大小为第一个大于等于 ht[0].used 的 2 ^ n</li>
-</ul>
-</li>
-<li>将保存在 ht[0] 中的所有键值对 rehash 到 ht[1] 上面：rehash 指的是重新计算键的哈希值和索引值，然后将键值对放置到 ht[1] 哈希表中索引值对应位置上</li>
-<li>当 ht[0] 包含的所有键值对都迁移到了 ht[1] 之后（ht[0] 变为空表），释放 ht[0] ，将 ht[1] 设置为 ht[0] ，并在 ht[1] 新创建一个空白哈希表，为下一次 rehash 做准备</li>
-</ol>
-<span id="more"></span>
-<p>举个例子，假设程序要对下图所示的字典的 ht[0] 进行扩展操作，那么程序执行以下步骤：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/1abf039c-703b-5fde-b67f-c97fe9e3273b.png" alt="图片丢失" title="图1"></p>
-<ol>
-<li><p>ht[0].used 当前的值为 4， 4 * 2 = 8 ，而 8 （2 ^ 3） 恰好是第一个大于等于 8 的 2 的 n 次方，所以程序会将 ht[1] 哈希表的大小设置为 8，下图是为 ht[1] 在分配空间之后字典的样子</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/5fbf2db9-21a4-50b7-9dbd-3f78db2da4de.png" alt="图片丢失" title="图2"></p>
-</li>
-<li><p>将保存在 ht[0] 包含的四个键值对都 rehash 到 ht[1]，如下图</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/31ed5ffe-6b5e-5d6d-bfbb-53899e9c5ad9.png" alt="图片丢失" title="图3"></p>
-</li>
-<li><p>释放 ht[0]，并将 ht[1] 设置为 ht[0]，然后为 ht[1] 分配一个空白的哈希表，如下图</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/cb035281-bd11-5778-96e9-c3699b427ea2.png" alt="图片丢失" title="图4"></p>
-</li>
-</ol>
-<p>到此，对哈希表的扩张操作执行完毕，程序成功将哈希表的大小从原来的 4 扩展为 8</p>
-<h3 id="哈希表扩展和收缩的触发条件"><a href="#哈希表扩展和收缩的触发条件" class="headerlink" title="哈希表扩展和收缩的触发条件"></a>哈希表扩展和收缩的触发条件</h3><h4 id="哈希表扩展"><a href="#哈希表扩展" class="headerlink" title="哈希表扩展"></a>哈希表扩展</h4><p>当以下条件中的任意一个被满足时，程序和自动开始对哈希表执行扩展</p>
-<ol>
-<li>服务器目前没有执行 BGSAVE 或者 BGREWRITEAOF 命令，并且哈希表的负载因子大于等于 1；</li>
-<li>服务器目前正在执行 BGSAVE 或者 BGREWRITEAOF 命令，并且哈希表的负载因子大于等于 5；</li>
-</ol>
-<h4 id="哈希表的收缩"><a href="#哈希表的收缩" class="headerlink" title="哈希表的收缩"></a>哈希表的收缩</h4><p>当哈希表的负载因子小于 0.1 时，程序会自动开始对哈希表进行收缩</p>
-<p>哈希表的负载因子的计算公式如下：</p>
-<figure class="highlight c"><table><tr><td class="code"><pre><span class="line">load_factor = ht[<span class="number">0</span>].used / ht[<span class="number">0</span>].size</span><br></pre></td></tr></table></figure>
-<p>根据 BGSAVE 命令或者 BGREWRITEAOF 命令是否正在执行，服务器执行执行操作所需的负载因子并不相同，这是因为正在执行 BGSAVE 或者 BGREWRITEAOF 命令的过程中，Redis 需要创建当前服务进程的子进程，而大多数操作系统都采用写时复制技术来优化进程的使用效率，所以子进程存在的期间，服务器会提高执行扩展操作所需要的负载因子，从而尽量地避免在子进程存在期间进行哈希表扩展操作，这可以避免不必要的内存写入操作，最大限度地节约内存</p>
-]]></content>
-      <categories>
-        <category>redis</category>
-      </categories>
-      <tags>
-        <tag>redis</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>SpringSecurity中的SecurityContextHolder分析</title>
-    <url>/2022/03/31/SpringSecurity%E4%B8%AD%E7%9A%84SecurityContextHolder%E5%88%86%E6%9E%90/</url>
-    <content><![CDATA[<h3 id="SpringSecurity-中的-SecurityContextHolder-分析"><a href="#SpringSecurity-中的-SecurityContextHolder-分析" class="headerlink" title="SpringSecurity 中的 SecurityContextHolder 分析"></a>SpringSecurity 中的 SecurityContextHolder 分析</h3><h4 id="分析"><a href="#分析" class="headerlink" title="分析"></a>分析</h4><p>一般我们在 SpringSecurity 中可以通过 SecurityContextHolder.getContext().getAuthentication()获取到认证信息，这个认证信息就是存放在 SecurityContext 中，这个 SecurityContext 就是通过 SecurityContextHolder.getContext()获取到的，SecurityContextHolder.getContext()的代码如下</p>
-<figure class="highlight java"><table><tr><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="keyword">static</span> SecurityContext <span class="title function_">getContext</span><span class="params">()</span> &#123;</span><br><span class="line">  <span class="keyword">return</span> strategy.getContext();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<span id="more"></span>
-<p>上面的这个 strategy 是根据具体的策略来确定到底从哪获取 SecurityContext，这个 strategy 的初始化代码</p>
-<figure class="highlight java"><table><tr><td class="code"><pre><span class="line"><span class="keyword">static</span> &#123;</span><br><span class="line">  initialize();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title function_">initialize</span><span class="params">()</span> &#123;</span><br><span class="line">  <span class="keyword">if</span> (!StringUtils.hasText(strategyName)) &#123;</span><br><span class="line">    <span class="comment">// Set default</span></span><br><span class="line">    <span class="comment">//默认的策略是从ThreadLocal中获取，可以通过在SecurityContextHolder.setStrategyName()方法设置</span></span><br><span class="line">    strategyName = MODE_THREADLOCAL;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="comment">//默认的策略是从ThreadLocal中获取</span></span><br><span class="line">  <span class="keyword">if</span> (strategyName.equals(MODE_THREADLOCAL)) &#123;</span><br><span class="line">    strategy = <span class="keyword">new</span> <span class="title class_">ThreadLocalSecurityContextHolderStrategy</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="comment">//可继承的ThreadLocal</span></span><br><span class="line">  <span class="keyword">else</span> <span class="keyword">if</span> (strategyName.equals(MODE_INHERITABLETHREADLOCAL)) &#123;</span><br><span class="line">    strategy = <span class="keyword">new</span> <span class="title class_">InheritableThreadLocalSecurityContextHolderStrategy</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="comment">//全局模式</span></span><br><span class="line">  <span class="keyword">else</span> <span class="keyword">if</span> (strategyName.equals(MODE_GLOBAL)) &#123;</span><br><span class="line">    strategy = <span class="keyword">new</span> <span class="title class_">GlobalSecurityContextHolderStrategy</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">else</span> &#123;</span><br><span class="line">    <span class="comment">// Try to load a custom strategy</span></span><br><span class="line">    <span class="keyword">try</span> &#123;</span><br><span class="line">      Class&lt;?&gt; clazz = Class.forName(strategyName);</span><br><span class="line">      Constructor&lt;?&gt; customStrategy = clazz.getConstructor();</span><br><span class="line">      strategy = (SecurityContextHolderStrategy) customStrategy.newInstance();</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">catch</span> (Exception ex) &#123;</span><br><span class="line">      ReflectionUtils.handleReflectionException(ex);</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  initializeCount++;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>ThreadLocal 模式下的使用的是 ThreadLocalSecurityContextHolderStrategy 这个类的对象来存储 SecurityContext</p>
-<figure class="highlight java"><table><tr><td class="code"><pre><span class="line"><span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">ThreadLocalSecurityContextHolderStrategy</span> <span class="keyword">implements</span></span><br><span class="line">    <span class="title class_">SecurityContextHolderStrategy</span> &#123;</span><br><span class="line">  <span class="comment">// ~ Static fields/initializers</span></span><br><span class="line">  <span class="comment">// =====================================================================================</span></span><br><span class="line"></span><br><span class="line">  <span class="comment">//使用ThreadLocal来存储，在同一个线程中可以获取得到（不了解ThredLocal的使用可以上网查一下）</span></span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> ThreadLocal&lt;SecurityContext&gt; contextHolder = <span class="keyword">new</span> <span class="title class_">ThreadLocal</span>&lt;&gt;();</span><br><span class="line"></span><br><span class="line">  <span class="comment">// ~ Methods</span></span><br><span class="line">  <span class="comment">// ========================================================================================================</span></span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">clearContext</span><span class="params">()</span> &#123;</span><br><span class="line">    contextHolder.remove();</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> SecurityContext <span class="title function_">getContext</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="type">SecurityContext</span> <span class="variable">ctx</span> <span class="operator">=</span> contextHolder.get();</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (ctx == <span class="literal">null</span>) &#123;</span><br><span class="line">      ctx = createEmptyContext();</span><br><span class="line">      contextHolder.set(ctx);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> ctx;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">setContext</span><span class="params">(SecurityContext context)</span> &#123;</span><br><span class="line">    Assert.notNull(context, <span class="string">&quot;Only non-null SecurityContext instances are permitted&quot;</span>);</span><br><span class="line">    contextHolder.set(context);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> SecurityContext <span class="title function_">createEmptyContext</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">SecurityContextImpl</span>();</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>接下来再看下全局模式对应的 GlobalSecurityContextHolderStrategy 的代码</p>
-<figure class="highlight java"><table><tr><td class="code"><pre><span class="line"><span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">GlobalSecurityContextHolderStrategy</span> <span class="keyword">implements</span> <span class="title class_">SecurityContextHolderStrategy</span> &#123;</span><br><span class="line">  <span class="comment">// ~ Static fields/initializers</span></span><br><span class="line">  <span class="comment">// =====================================================================================</span></span><br><span class="line">  <span class="comment">//直接使用静态变量存储，所有线程获取到的都是同一个东西</span></span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">static</span> SecurityContext contextHolder;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// ~ Methods</span></span><br><span class="line">  <span class="comment">// ========================================================================================================</span></span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">clearContext</span><span class="params">()</span> &#123;</span><br><span class="line">    contextHolder = <span class="literal">null</span>;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> SecurityContext <span class="title function_">getContext</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="keyword">if</span> (contextHolder == <span class="literal">null</span>) &#123;</span><br><span class="line">      contextHolder = <span class="keyword">new</span> <span class="title class_">SecurityContextImpl</span>();</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> contextHolder;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">setContext</span><span class="params">(SecurityContext context)</span> &#123;</span><br><span class="line">    Assert.notNull(context, <span class="string">&quot;Only non-null SecurityContext instances are permitted&quot;</span>);</span><br><span class="line">    contextHolder = context;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">public</span> SecurityContext <span class="title function_">createEmptyContext</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">SecurityContextImpl</span>();</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>那个可继承 ThreadLocal 用得比较少，应该和和上面的 ThradLocal 差不多，感兴趣的可以去网上查一下，这里就不分析了</p>
-<h4 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h4><ul>
-<li>SecurityContextHolder 的作用是保存 SecurityContext</li>
-<li>SecurityContextHolder 默认使用的是 ThreadLocal 模式来保存 SecurityContext，在这种模式下同一个线程获取到 SecurityContext 都是一样的，如果是全局模式下，所有的线程获取到的 SecurityContext 都是同一个，如果需要使用其它模式可以通过调用 SecurityContextHolder.setStrategyName 方法来设置</li>
-</ul>
-]]></content>
-      <categories>
-        <category>java</category>
-        <category>Spring</category>
-        <category>SpringBoot</category>
-        <category>SpringSecurity</category>
-      </categories>
-      <tags>
-        <tag>java</tag>
-        <tag>Spring</tag>
-        <tag>SpringBoot</tag>
-        <tag>SpringSecurity</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Spring 三级缓存</title>
     <url>/2024/01/21/Spring%E4%B8%89%E7%BA%A7%E7%BC%93%E5%AD%98%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/</url>
     <content><![CDATA[<h3 id="Spring-三级缓存"><a href="#Spring-三级缓存" class="headerlink" title="Spring 三级缓存"></a>Spring 三级缓存</h3><h4 id="源码分析"><a href="#源码分析" class="headerlink" title="源码分析"></a>源码分析</h4><p>测试代码如下：</p>
@@ -575,154 +575,6 @@
         <tag>java</tag>
         <tag>Spring</tag>
         <tag>SpringBoot</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>MySQL 加行锁的规则</title>
-    <url>/2024/06/05/mysql%E7%9A%84%E5%8A%A0%E9%94%81%E8%A7%84%E5%88%99/</url>
-    <content><![CDATA[<h3 id="MySQL-加行锁的规则"><a href="#MySQL-加行锁的规则" class="headerlink" title="MySQL 加行锁的规则"></a>MySQL 加行锁的规则</h3><h4 id="实验环境"><a href="#实验环境" class="headerlink" title="实验环境"></a>实验环境</h4><p>MySQL 的版本是 8.0.30</p>
-<p>这里说下这是我原来测试其它功能的表，如果觉得数据太多不好分析可以把数据弄个 4-5 条就可以了，初始化数据的 sql 如下：</p>
-<figure class="highlight sql"><table><tr><td class="code"><pre><span class="line"><span class="keyword">CREATE</span> <span class="keyword">TABLE</span> `student`  (</span><br><span class="line">  `id` <span class="type">int</span> <span class="keyword">NOT</span> <span class="keyword">NULL</span> AUTO_INCREMENT,</span><br><span class="line">  `name` <span class="type">varchar</span>(<span class="number">20</span>) <span class="type">CHARACTER</span> <span class="keyword">SET</span> utf8mb3 <span class="keyword">COLLATE</span> utf8mb3_general_ci <span class="keyword">NOT</span> <span class="keyword">NULL</span>,</span><br><span class="line">  `age` <span class="type">int</span> <span class="keyword">NULL</span> <span class="keyword">DEFAULT</span> <span class="keyword">NULL</span>,</span><br><span class="line">  `test1` <span class="type">varchar</span>(<span class="number">255</span>) <span class="type">CHARACTER</span> <span class="keyword">SET</span> utf8mb3 <span class="keyword">COLLATE</span> utf8mb3_general_ci <span class="keyword">NULL</span> <span class="keyword">DEFAULT</span> <span class="keyword">NULL</span>,</span><br><span class="line">  <span class="keyword">PRIMARY</span> KEY (`id`) <span class="keyword">USING</span> BTREE,</span><br><span class="line">  <span class="keyword">UNIQUE</span> INDEX `idx_name`(`name` <span class="keyword">ASC</span>) <span class="keyword">USING</span> BTREE COMMENT <span class="string">&#x27;name的唯一索引&#x27;</span>,</span><br><span class="line">  INDEX `idx_age`(`age` <span class="keyword">ASC</span>) <span class="keyword">USING</span> BTREE COMMENT <span class="string">&#x27;age的普通索引&#x27;</span></span><br><span class="line">) ENGINE <span class="operator">=</span> InnoDB AUTO_INCREMENT <span class="operator">=</span> <span class="number">101</span> <span class="type">CHARACTER</span> <span class="keyword">SET</span> <span class="operator">=</span> utf8mb3 <span class="keyword">COLLATE</span> <span class="operator">=</span> utf8mb3_general_ci ROW_FORMAT <span class="operator">=</span> <span class="keyword">Dynamic</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">1</span>, <span class="string">&#x27;鲁班&#x27;</span>, <span class="number">21</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">2</span>, <span class="string">&#x27;诸葛亮&#x27;</span>, <span class="number">71</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">3</span>, <span class="string">&#x27;荆轲&#x27;</span>, <span class="number">21</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">4</span>, <span class="string">&#x27;安其拉&#x27;</span>, <span class="number">24</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">5</span>, <span class="string">&#x27;橘右京&#x27;</span>, <span class="number">43</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">6</span>, <span class="string">&#x27;宋江&#x27;</span>, <span class="number">22</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">7</span>, <span class="string">&#x27;钟馗&#x27;</span>, <span class="number">23</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">8</span>, <span class="string">&#x27;林冲&#x27;</span>, <span class="number">43</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">9</span>, <span class="string">&#x27;李逵&#x27;</span>, <span class="number">12</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">10</span>, <span class="string">&#x27;王莽&#x27;</span>, <span class="number">43</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">11</span>, <span class="string">&#x27;李世民&#x27;</span>, <span class="number">54</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">12</span>, <span class="string">&#x27;张飞&#x27;</span>, <span class="number">32</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">13</span>, <span class="string">&#x27;刘备2&#x27;</span>, <span class="number">11</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">14</span>, <span class="string">&#x27;关羽&#x27;</span>, <span class="number">43</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">15</span>, <span class="string">&#x27;王与&#x27;</span>, <span class="number">21</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">16</span>, <span class="string">&#x27;秦叔宝&#x27;</span>, <span class="number">43</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">17</span>, <span class="string">&#x27;程咬金&#x27;</span>, <span class="number">65</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">18</span>, <span class="string">&#x27;嬴政&#x27;</span>, <span class="number">76</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">19</span>, <span class="string">&#x27;王建&#x27;</span>, <span class="number">23</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">20</span>, <span class="string">&#x27;张郃&#x27;</span>, <span class="number">12</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">21</span>, <span class="string">&#x27;后裔&#x27;</span>, <span class="number">12</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">22</span>, <span class="string">&#x27;孙悟空&#x27;</span>, <span class="number">21</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">23</span>, <span class="string">&#x27;猪八戒&#x27;</span>, <span class="number">22</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">24</span>, <span class="string">&#x27;沙和尚&#x27;</span>, <span class="number">25</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">25</span>, <span class="string">&#x27;乾隆&#x27;</span>, <span class="number">17</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">26</span>, <span class="string">&#x27;康熙&#x27;</span>, <span class="number">51</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">27</span>, <span class="string">&#x27;朱元璋&#x27;</span>, <span class="number">19</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">28</span>, <span class="string">&#x27;刘永&#x27;</span>, <span class="number">12</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">29</span>, <span class="string">&#x27;张伟&#x27;</span>, <span class="number">26</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">30</span>, <span class="string">&#x27;吕子乔&#x27;</span>, <span class="number">28</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">33</span>, <span class="string">&#x27;刘备&#x27;</span>, <span class="number">100</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">36</span>, <span class="string">&#x27;刘备4&#x27;</span>, <span class="number">13</span>, <span class="string">&#x27;2&#x27;</span>);</span><br></pre></td></tr></table></figure>
-<span id="more"></span>
-<h4 id="主键索引等值查询存在的记录"><a href="#主键索引等值查询存在的记录" class="headerlink" title="主键索引等值查询存在的记录"></a>主键索引等值查询存在的记录</h4><p>执行<code>SELECT * FROM student WHERE id = 36 LOCK IN SHARE MODE;</code>，之后执行 <code>SELECT * FROM performance_schema.data_locks;</code> 查看加锁情况（后面不会再重复查看加锁的语句）：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/174aa138-bd2d-45a9-bb53-feaa7e04cf4a.jpg" alt="图片丢失"></p>
-<blockquote>
-<p>这里得出的结论是：使用主键索引等值查询，并且这条记录存在，只会对主键索引上的数据加 record 锁</p>
-</blockquote>
-<h4 id="主键索引等值查询不存在的记录"><a href="#主键索引等值查询不存在的记录" class="headerlink" title="主键索引等值查询不存在的记录"></a>主键索引等值查询不存在的记录</h4><p>执行<code>SELECT * FROM  student  WHERE id = 33 LOCK IN SHARE MODE;</code>加锁的情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/84e37a66-44e7-4564-9425-2b73533e6e3a.jpg" alt="图片丢失"></p>
-<blockquote>
-<p>这里得出的结论是：使用主键索引等值查询，并且这条记录不存在时，会在所在条件所在的间隙加 gap 锁（例子里面锁的区间是<code>(33,36)</code>）</p>
-</blockquote>
-<p>这里有个特殊情况就是如果数据落在表中最大值和 <code>supremum</code> 之间，比如执行<code>SELECT * FROM  student  WHERE id = 37 LOCK IN SHARE MODE;</code>，那么加锁的范围会是<code>(36,supremum]</code>，个人认为这里不用 gap 锁而是用 next-key 锁的原因是加锁的基本单位是 next-key 锁，只是根据情况降级到 record 锁和 gap 锁，但是在这里给 <code>supremum</code>加不加 record 锁没区别，所以就不需要锁降级</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/85ea15aa-262d-463b-b424-cc9730afaa00.jpg" alt="图片丢失"></p>
-<h4 id="主键索引范围查询并且范围内存在记录"><a href="#主键索引范围查询并且范围内存在记录" class="headerlink" title="主键索引范围查询并且范围内存在记录"></a><span id="主键索引范围查询并且范围内存在记录">主键索引范围查询并且范围内存在记录</span></h4><p>执行<code>SELECT * FROM student WHERE id &gt; 29 AND id  &lt; 33  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/d08fcdb9-7685-497a-87c8-2ed9e0152752.jpg" alt="图片丢失"></p>
-<p>执行<code>SELECT * FROM student WHERE id &gt;= 29 AND id  &lt; 33  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/fb605f6d-ef34-43dc-a1e4-2d0f2c97f648.jpg" alt="图片丢失"></p>
-<p>执行<code>SELECT * FROM student WHERE id &gt; 29  AND id  &lt;= 33  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/a149d137-5ff6-4a71-a005-fef8ca419031.jpg" alt="图片丢失"></p>
-<p>执行<code>SELECT * FROM student WHERE id &gt;= 29  AND id  &lt;= 33  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/f1b5671f-d3ac-4196-bf0d-904b92c0e380.jpg" alt="图片丢失"></p>
-<blockquote>
-<p>这里得出的结论是：使用主键索引范围查询，并且范围内存在记录，会对符合条件的记录加 next-key 或者 record 锁，对剩余未加锁的间隙的下一条记录加 gap 锁</p>
-</blockquote>
-<p>不过有一种特殊情况，执行<code>SELECT * FROM student WHERE id &gt; 29 AND id &lt;= 36  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/ab269093-242f-4402-806c-7578811caeb0.png" alt="图片丢失"></p>
-<p>按理来说不应该给<code>(36,supremum]</code>加锁，</p>
-<p>在《MySQL 实战 45 讲》中作者给行锁加锁规则总结了“两个原则”、“两个优化”和“一个 bug”（《MySQL 实战 45 讲》的作者说的是截止到当时最新的 MySQL 版本：5.x 系列&lt;=5.7.24，8.0 系列 &lt;=8.0.13），其中的一个 bug 就是<code>唯一索引上的范围查询会访问到不满足条件的第一个值为止</code>，也就是在上面的例子中虽然扫描到了<code>id=36</code>的索引，还要继续向后扫描，所以还要对<code>supremum</code>加 next-key 锁（虽然 MySQL 说在 8.0.18 版本已经修复这个<a href="https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-18.html#mysqld-8-0-18-bug">bug（关键词 Bug #29508068）</a>，但是对于一部分的查询还是有这个 bug，就如上面的例子的之后的非主键唯一索引和非唯一索引范围查询）。</p>
-<h4 id="主键索引范围查询并且范围内不存在记录"><a href="#主键索引范围查询并且范围内不存在记录" class="headerlink" title="主键索引范围查询并且范围内不存在记录"></a>主键索引范围查询并且范围内不存在记录</h4><p>执行<code>SELECT * FROM student WHERE id &gt; 33 AND id &lt; 36  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/6d1288fa-2ceb-4711-9aaf-8584a3807370.png" alt="图片丢失"></p>
-<blockquote>
-<p>这里得出的结论是：使用主键索引范围查询，并且范围内不存在记录，会对查询条件所在范围的下一条记录加 gap 锁</p>
-</blockquote>
-<p>有一种特殊情况，执行<code>SELECT * FROM student WHERE id &gt; 36  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/9491a311-71c6-4039-bca6-e7dd98b1777d.png" alt="图片丢失"></p>
-<p>这里可以也是上面说的不需要降级所以给加的是 next-key 锁</p>
-<h4 id="非主键唯一索引等值查询存在的记录"><a href="#非主键唯一索引等值查询存在的记录" class="headerlink" title="非主键唯一索引等值查询存在的记录"></a>非主键唯一索引等值查询存在的记录</h4><p>执行<code>SELECT * FROM  student WHERE name = &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/4490b333-318b-42ba-9fda-607d2b4ad766.png" alt="图片丢失"></p>
-<blockquote>
-<p>这里得出的结论是：使用非主键唯一索引等值查询，并且这条记录存在时，会对非主键唯一索引上查到的记录加 record 锁，还会给对应的主键索引的记录加上 record 锁</p>
-</blockquote>
-<p>还有特殊情况，执行<code>SELECT id, name FROM  student WHERE name = &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/576a14f9-3236-4720-95cb-7cf1792464ee.png" alt="图片丢失"></p>
-<p>执行<code>SELECT id, name FROM  student WHERE name = &#39;刘备4&#39; FOR UPDATE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/1b0f1423-384d-49f0-be14-fce1180fe5c4.png" alt="图片丢失"></p>
-<p>发现如果只是使用共享锁并且是索引覆盖查询是不需要对主键索引对于的记录加 record 锁的，但是排它锁查询是不管是否索引覆盖都给对应的主键索引加 record 锁</p>
-<h4 id="非主键唯一索引等值查询不存在的记录"><a href="#非主键唯一索引等值查询不存在的记录" class="headerlink" title="非主键唯一索引等值查询不存在的记录"></a>非主键唯一索引等值查询不存在的记录</h4><p>执行<code>SELECT * FROM  student WHERE name = &#39;刘备3&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/1bc2fbd1-a28b-481c-ad09-f9d6c10c34c3.png" alt="图片丢失"></p>
-<blockquote>
-<p>这里得出的结论是：使用非主键唯一索引等值查询，并且这条记录不存在时，会对非主键唯一索引上查询条件所在间隙的下一条记录加 gap 锁</p>
-</blockquote>
-<p>又是锁不需要降级所以是加 next-key 锁的特殊情况，执行<code>SELECT * FROM  student  WHERE name = &#39;鲁班1&#39; LOCK IN SHARE MODE;</code></p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/47d81669-5483-470e-8fc7-3f2a21290ee0.png" alt="图片丢失"></p>
-<h4 id="非主键唯一索引范围查询并且范围内存在记录"><a href="#非主键唯一索引范围查询并且范围内存在记录" class="headerlink" title="非主键唯一索引范围查询并且范围内存在记录"></a>非主键唯一索引范围查询并且范围内存在记录</h4><p>执行<code>SELECT * FROM student WHERE name &gt; &#39;刘备&#39; AND name  &lt; &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/6d95ab7e-29f5-4e16-8e3a-1c018a4a9ec1.png" alt="图片丢失"></p>
-<p>执行<code>SELECT * FROM student WHERE name &gt;= &#39;刘备&#39; AND name  &lt; &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/07af74a7-f66a-4457-a55d-e0ad997f621e.png" alt="图片丢失"></p>
-<p>执行<code>SELECT * FROM student WHERE name &gt; &#39;刘备&#39; AND name  &lt; &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/8356246f-0d6f-4052-bd98-3df6ed9f9169.png" alt="图片丢失"></p>
-<p>执行<code>SELECT * FROM student WHERE name &gt;= &#39;刘备&#39; AND name  &lt;= &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/50752f4c-2867-4b53-b329-109900a34107.png" alt="图片丢失"></p>
-<p>如果只是看非主键唯一索引加锁的情况会发现 bug</p>
-<ol>
-<li><code>name &lt; &#39;刘备4&#39;</code>原本应该锁的是<code>(刘备2,刘备4)</code>，但是现在多出了一个 record 锁，变成了<code>(刘备2,刘备4]</code></li>
-<li><code>name &lt;= &#39;刘备4</code>原本应该锁的是<code>(刘备2,刘备4]</code>，但是现在多出来一个<code>(刘备4,刘永]</code></li>
-<li><code>name &gt; &#39;刘备&#39;</code>原本应该就只是给<code>刘备</code>这条记录加 record 锁，但是多出来了一个 gap 锁，变成了<code>(关羽,刘备]</code></li>
-</ol>
-<p>这就是前面<a href="#主键索引范围查询并且范围内存在记录">主键索引范围查询并且范围内存在记录</a>中说的那个 bug 导致的</p>
-<p>然后再看主键索引上的加锁情况发现主键索引上加锁是正常的</p>
-<ol>
-<li><code>name &lt; &#39;刘备4&#39;</code>在非主键唯一索引上加锁的范围是<code>(刘备2,刘备4]</code>，但是主键索引上并未对<code>刘备4</code>对应的记录 record 锁</li>
-<li><code>name &lt;= &#39;刘备4</code>在非主键唯一索引上加锁的范围是<code>(刘备4,刘永]</code>，但是主键索引上并未对<code>刘永</code>对应的记录 record 锁</li>
-</ol>
-<blockquote>
-<p>这里得出的结论是：使用非主键唯一索引范围查询，并且范围内存在记录，会对符合条件的记录加 next-key（上面的<code>name &gt; &#39;刘备&#39;</code>的 bug），会对不满足条件的第一个值记录加上 next-key 锁（上面的<code>name &lt; &#39;刘备4&#39;</code>和<code>name &lt;= &#39;刘备4</code>），在主键索引上，会对在查询范围内记录对应的主键索引上加 record 锁</p>
-</blockquote>
-<p>而且上面的这个现象还和你索引的排序有关，如果你执行把索引<code>idx_name</code>改成降序，再执行<code>SELECT * FROM student WHERE name &gt;= &#39;刘备&#39; AND name  &lt;= &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁就会变成下面这种情况：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/39a63219-66d9-4b2a-8daf-4c9aabf7418f.png" alt="图片丢失"></p>
-<h4 id="非主键唯一索引范围查询并且范围内不存在记录"><a href="#非主键唯一索引范围查询并且范围内不存在记录" class="headerlink" title="非主键唯一索引范围查询并且范围内不存在记录"></a>非主键唯一索引范围查询并且范围内不存在记录</h4><p>执行<code>SELECT * FROM student WHERE name &gt; &#39;刘备1&#39; AND name  &lt; &#39;刘备2&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/f8826f9d-af4f-4a66-b2b7-d94701627f82.png" alt="图片丢失"></p>
-<p>这里面加锁逻辑其实和上面的<code>非主键唯一索引范围查询并且范围内存在记录</code>加锁的一样的，都有那个 bug 的问题，区别就是查不到记录所以不会给主键索引加锁</p>
-<blockquote>
-<p>这里得出的结论是：使用非主键唯一索引范围查询，并且范围内不存在记录，会对查询条件所在间隙的下一条记录加 next-key 锁</p>
-</blockquote>
-<h4 id="非唯一索引等值查询存在的记录"><a href="#非唯一索引等值查询存在的记录" class="headerlink" title="非唯一索引等值查询存在的记录"></a>非唯一索引等值查询存在的记录</h4><p>执行<code>SELECT * FROM student  WHERE age = 12 LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/047e975d-6d32-43c6-a67c-3c922b07be34.png" alt="图片丢失"></p>
-<blockquote>
-<p>这里得出的结论是：使用非唯一索引等值查询，并且这条记录存在时，在非唯一索引上，会对符合查询条件的记录加 next-key 锁，会对不满足条件的第一个值记录加上 gap 锁，在主键索引上，对符合查询条件的记录在主键索引对应的位置上加 reocrd 锁</p>
-</blockquote>
-<h4 id="非唯一索引等值查询不存在的记录"><a href="#非唯一索引等值查询不存在的记录" class="headerlink" title="非唯一索引等值查询不存在的记录"></a>非唯一索引等值查询不存在的记录</h4><p>执行<code>SELECT * FROM student  WHERE age = 18 LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/9916c64d-cbe9-405e-b97d-115e19365c96.png" alt="图片丢失"></p>
-<blockquote>
-<p>这里得出的结论是：使用非唯一索引等值查询，并且这条记录不存在时，在非唯一索引上，会对符合查询条件所在间隙的下一条记录加 gap 锁</p>
-</blockquote>
-<p>这里也有那个锁没降级的情况，不在赘述了</p>
-<h4 id="非唯一索引范围查询并且范围内存在记录"><a href="#非唯一索引范围查询并且范围内存在记录" class="headerlink" title="非唯一索引范围查询并且范围内存在记录"></a>非唯一索引范围查询并且范围内存在记录</h4><p>执行<code>SELECT * FROM student WHERE age &gt;= 12 AND age  &lt; 13   LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/cdd437a0-a423-48b0-9610-44a2dd404680.png" alt="图片丢失"></p>
-<p>执行<code>SELECT * FROM student WHERE age &gt; 12 AND age  &lt;= 13   LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/79f05fb8-1ef3-47c7-85ef-26a132633e81.png" alt="图片丢失"></p>
-<p>执行<code>SELECT * FROM student WHERE age &gt;= 12 AND age  &lt;= 13   LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/fccc49cd-e996-4ffe-bc23-55782c25618f.png" alt="图片丢失"></p>
-<p>如果只是看非唯一索引加锁的情况会发现 bug</p>
-<ol>
-<li><code>age &lt; 13</code>原本应该锁的是<code>(12,13)</code>，但是现在多出了一个 record 锁变成了<code>(12,13]</code></li>
-<li><code>age &lt;= 13</code> 原本应该锁的是<code>(12,13]</code>，但是现在多出了一个 next-key 锁<code>(13,17]</code></li>
-</ol>
-<p>这就是前面<a href="#主键索引范围查询并且范围内存在记录">主键索引范围查询并且范围内存在记录</a>中说的那个 bug 导致的</p>
-<p>然后再看主键索引上的加锁情况发现主键索引上加锁是正常的</p>
-<ol>
-<li><code>age &lt; 13&#39;</code>在非唯一索引上加锁的范围是<code>(12,13]</code>，但是主键索引上并未对<code>13</code>对应的记录 record 锁</li>
-<li><code>age &lt;= 13</code>在非唯一索引上加锁的范围是<code>(13,17]</code>，但是主键索引上并未对<code>17</code>对应的记录 record 锁</li>
-</ol>
-<blockquote>
-<p>这里得出的结论是：使用非唯一索引范围查询，并且范围内存在记录，会对符合条件的记录加 next-key，会对不满足条件的第一个值记录加上 next-key 锁（上面的<code>age &lt; 13&#39;</code>和<code>age &lt;= 13</code>），在主键索引上，会对在查询范围内记录对应的主键索引上加 record 锁</p>
-</blockquote>
-<p>不过这里要说一下<code>age &gt; 12</code>的情况，因为 age 是 12 的有多条，但是这里<code>(12,13]</code>的 12 这条记录对应的是 id 最大的那条，这里对应的就是 id=28 的这条，原因也很简单因为我的索引是升序排序的，如果相同的情况下会根据 id 再升序排序，如果你这里把索引的排序改成降序，那么索引值相同的情况下还是会根据 id 升序排序，下面把 age 的排序改成降序，执行<code>SELECT * FROM student WHERE age &gt; 12 AND age  &lt;= 13   LOCK IN SHARE MODE;</code>后加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/c49389f4-961f-4b0c-9439-bbfe60a26f11.png" alt="图片丢失"></p>
-<p>如果是 age 相同的情况下是按照 id 降序的话，这里应该锁显示的 LOCK_DATA 显示的是<code>12,28</code></p>
-<p>所以根据上面的情况可以发现<code>age &gt; 12</code>并且索引升序的情况下可以插入 age=12 的记录只是要求 id 小于最大的值就行，在这里就是 id 小于 28，<code>age &lt; 13</code>也是一样的逻辑只是变成 id 要大于最小值</p>
-<h4 id="非唯一索引范围查询并且范围内不存在记录"><a href="#非唯一索引范围查询并且范围内不存在记录" class="headerlink" title="非唯一索引范围查询并且范围内不存在记录"></a>非唯一索引范围查询并且范围内不存在记录</h4><p>执行<code>SELECT * FROM student WHERE age &gt; 12 AND age  &lt; 13   LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/94efc14e-425a-47b2-888d-61b164c33474.png" alt="图片丢失"></p>
-<p>这里面加锁逻辑其实和上面的<code>非唯一索引范围查询并且范围内存在记录</code>加锁的一样的，都有那个 bug 的问题，区别就是查不到记录所以不会给主键索引加锁</p>
-<blockquote>
-<p>这里得出的结论是：使用非唯一索引范围查询，并且范围内不存在记录，会对查询条件所在间隙的下一条记录加 next-key 锁</p>
-</blockquote>
-<h4 id="不使用索引查询"><a href="#不使用索引查询" class="headerlink" title="不使用索引查询"></a>不使用索引查询</h4><p>分别执行</p>
-<p><code>SELECT id,name FROM student WHERE test1 = 2 LOCK IN SHARE MODE;</code></p>
-<p><code>SELECT id,name FROM student WHERE test1 &gt; 2 LOCK IN SHARE MODE;</code></p>
-<p>加锁情况如下：</p>
-<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/45ecd17d-db88-41d8-8575-70912179079f.png" alt="图片丢失"></p>
-<p>这里图片截不全，表中每一条记录包括最大界限伪记录 supremum 都加了锁 next-key 锁</p>
-<blockquote>
-<p>这里得出的结论是：不使用索引查询时，无论是等值查询还是范围查询，无论是否存在查询结果，都会对表中所有的记录加 next-key 锁，也就是我们常说的“锁表”</p>
-</blockquote>
-]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
@@ -961,6 +813,154 @@
       <tags>
         <tag>java</tag>
         <tag>Netty</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>MySQL 加行锁的规则</title>
+    <url>/2024/06/05/mysql%E7%9A%84%E5%8A%A0%E9%94%81%E8%A7%84%E5%88%99/</url>
+    <content><![CDATA[<h3 id="MySQL-加行锁的规则"><a href="#MySQL-加行锁的规则" class="headerlink" title="MySQL 加行锁的规则"></a>MySQL 加行锁的规则</h3><h4 id="实验环境"><a href="#实验环境" class="headerlink" title="实验环境"></a>实验环境</h4><p>MySQL 的版本是 8.0.30</p>
+<p>这里说下这是我原来测试其它功能的表，如果觉得数据太多不好分析可以把数据弄个 4-5 条就可以了，初始化数据的 sql 如下：</p>
+<figure class="highlight sql"><table><tr><td class="code"><pre><span class="line"><span class="keyword">CREATE</span> <span class="keyword">TABLE</span> `student`  (</span><br><span class="line">  `id` <span class="type">int</span> <span class="keyword">NOT</span> <span class="keyword">NULL</span> AUTO_INCREMENT,</span><br><span class="line">  `name` <span class="type">varchar</span>(<span class="number">20</span>) <span class="type">CHARACTER</span> <span class="keyword">SET</span> utf8mb3 <span class="keyword">COLLATE</span> utf8mb3_general_ci <span class="keyword">NOT</span> <span class="keyword">NULL</span>,</span><br><span class="line">  `age` <span class="type">int</span> <span class="keyword">NULL</span> <span class="keyword">DEFAULT</span> <span class="keyword">NULL</span>,</span><br><span class="line">  `test1` <span class="type">varchar</span>(<span class="number">255</span>) <span class="type">CHARACTER</span> <span class="keyword">SET</span> utf8mb3 <span class="keyword">COLLATE</span> utf8mb3_general_ci <span class="keyword">NULL</span> <span class="keyword">DEFAULT</span> <span class="keyword">NULL</span>,</span><br><span class="line">  <span class="keyword">PRIMARY</span> KEY (`id`) <span class="keyword">USING</span> BTREE,</span><br><span class="line">  <span class="keyword">UNIQUE</span> INDEX `idx_name`(`name` <span class="keyword">ASC</span>) <span class="keyword">USING</span> BTREE COMMENT <span class="string">&#x27;name的唯一索引&#x27;</span>,</span><br><span class="line">  INDEX `idx_age`(`age` <span class="keyword">ASC</span>) <span class="keyword">USING</span> BTREE COMMENT <span class="string">&#x27;age的普通索引&#x27;</span></span><br><span class="line">) ENGINE <span class="operator">=</span> InnoDB AUTO_INCREMENT <span class="operator">=</span> <span class="number">101</span> <span class="type">CHARACTER</span> <span class="keyword">SET</span> <span class="operator">=</span> utf8mb3 <span class="keyword">COLLATE</span> <span class="operator">=</span> utf8mb3_general_ci ROW_FORMAT <span class="operator">=</span> <span class="keyword">Dynamic</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">1</span>, <span class="string">&#x27;鲁班&#x27;</span>, <span class="number">21</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">2</span>, <span class="string">&#x27;诸葛亮&#x27;</span>, <span class="number">71</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">3</span>, <span class="string">&#x27;荆轲&#x27;</span>, <span class="number">21</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">4</span>, <span class="string">&#x27;安其拉&#x27;</span>, <span class="number">24</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">5</span>, <span class="string">&#x27;橘右京&#x27;</span>, <span class="number">43</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">6</span>, <span class="string">&#x27;宋江&#x27;</span>, <span class="number">22</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">7</span>, <span class="string">&#x27;钟馗&#x27;</span>, <span class="number">23</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">8</span>, <span class="string">&#x27;林冲&#x27;</span>, <span class="number">43</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">9</span>, <span class="string">&#x27;李逵&#x27;</span>, <span class="number">12</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">10</span>, <span class="string">&#x27;王莽&#x27;</span>, <span class="number">43</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">11</span>, <span class="string">&#x27;李世民&#x27;</span>, <span class="number">54</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">12</span>, <span class="string">&#x27;张飞&#x27;</span>, <span class="number">32</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">13</span>, <span class="string">&#x27;刘备2&#x27;</span>, <span class="number">11</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">14</span>, <span class="string">&#x27;关羽&#x27;</span>, <span class="number">43</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">15</span>, <span class="string">&#x27;王与&#x27;</span>, <span class="number">21</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">16</span>, <span class="string">&#x27;秦叔宝&#x27;</span>, <span class="number">43</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">17</span>, <span class="string">&#x27;程咬金&#x27;</span>, <span class="number">65</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">18</span>, <span class="string">&#x27;嬴政&#x27;</span>, <span class="number">76</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">19</span>, <span class="string">&#x27;王建&#x27;</span>, <span class="number">23</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">20</span>, <span class="string">&#x27;张郃&#x27;</span>, <span class="number">12</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">21</span>, <span class="string">&#x27;后裔&#x27;</span>, <span class="number">12</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">22</span>, <span class="string">&#x27;孙悟空&#x27;</span>, <span class="number">21</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">23</span>, <span class="string">&#x27;猪八戒&#x27;</span>, <span class="number">22</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">24</span>, <span class="string">&#x27;沙和尚&#x27;</span>, <span class="number">25</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">25</span>, <span class="string">&#x27;乾隆&#x27;</span>, <span class="number">17</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">26</span>, <span class="string">&#x27;康熙&#x27;</span>, <span class="number">51</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">27</span>, <span class="string">&#x27;朱元璋&#x27;</span>, <span class="number">19</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">28</span>, <span class="string">&#x27;刘永&#x27;</span>, <span class="number">12</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">29</span>, <span class="string">&#x27;张伟&#x27;</span>, <span class="number">26</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">30</span>, <span class="string">&#x27;吕子乔&#x27;</span>, <span class="number">28</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">33</span>, <span class="string">&#x27;刘备&#x27;</span>, <span class="number">100</span>, <span class="string">&#x27;1&#x27;</span>);</span><br><span class="line"><span class="keyword">INSERT</span> <span class="keyword">INTO</span> `student` <span class="keyword">VALUES</span> (<span class="number">36</span>, <span class="string">&#x27;刘备4&#x27;</span>, <span class="number">13</span>, <span class="string">&#x27;2&#x27;</span>);</span><br></pre></td></tr></table></figure>
+<span id="more"></span>
+<h4 id="主键索引等值查询存在的记录"><a href="#主键索引等值查询存在的记录" class="headerlink" title="主键索引等值查询存在的记录"></a>主键索引等值查询存在的记录</h4><p>执行<code>SELECT * FROM student WHERE id = 36 LOCK IN SHARE MODE;</code>，之后执行 <code>SELECT * FROM performance_schema.data_locks;</code> 查看加锁情况（后面不会再重复查看加锁的语句）：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/174aa138-bd2d-45a9-bb53-feaa7e04cf4a.jpg" alt="图片丢失"></p>
+<blockquote>
+<p>这里得出的结论是：使用主键索引等值查询，并且这条记录存在，只会对主键索引上的数据加 record 锁</p>
+</blockquote>
+<h4 id="主键索引等值查询不存在的记录"><a href="#主键索引等值查询不存在的记录" class="headerlink" title="主键索引等值查询不存在的记录"></a>主键索引等值查询不存在的记录</h4><p>执行<code>SELECT * FROM  student  WHERE id = 33 LOCK IN SHARE MODE;</code>加锁的情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/84e37a66-44e7-4564-9425-2b73533e6e3a.jpg" alt="图片丢失"></p>
+<blockquote>
+<p>这里得出的结论是：使用主键索引等值查询，并且这条记录不存在时，会在所在条件所在的间隙加 gap 锁（例子里面锁的区间是<code>(33,36)</code>）</p>
+</blockquote>
+<p>这里有个特殊情况就是如果数据落在表中最大值和 <code>supremum</code> 之间，比如执行<code>SELECT * FROM  student  WHERE id = 37 LOCK IN SHARE MODE;</code>，那么加锁的范围会是<code>(36,supremum]</code>，个人认为这里不用 gap 锁而是用 next-key 锁的原因是加锁的基本单位是 next-key 锁，只是根据情况降级到 record 锁和 gap 锁，但是在这里给 <code>supremum</code>加不加 record 锁没区别，所以就不需要锁降级</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/85ea15aa-262d-463b-b424-cc9730afaa00.jpg" alt="图片丢失"></p>
+<h4 id="主键索引范围查询并且范围内存在记录"><a href="#主键索引范围查询并且范围内存在记录" class="headerlink" title="主键索引范围查询并且范围内存在记录"></a><span id="主键索引范围查询并且范围内存在记录">主键索引范围查询并且范围内存在记录</span></h4><p>执行<code>SELECT * FROM student WHERE id &gt; 29 AND id  &lt; 33  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/d08fcdb9-7685-497a-87c8-2ed9e0152752.jpg" alt="图片丢失"></p>
+<p>执行<code>SELECT * FROM student WHERE id &gt;= 29 AND id  &lt; 33  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/fb605f6d-ef34-43dc-a1e4-2d0f2c97f648.jpg" alt="图片丢失"></p>
+<p>执行<code>SELECT * FROM student WHERE id &gt; 29  AND id  &lt;= 33  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/a149d137-5ff6-4a71-a005-fef8ca419031.jpg" alt="图片丢失"></p>
+<p>执行<code>SELECT * FROM student WHERE id &gt;= 29  AND id  &lt;= 33  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/f1b5671f-d3ac-4196-bf0d-904b92c0e380.jpg" alt="图片丢失"></p>
+<blockquote>
+<p>这里得出的结论是：使用主键索引范围查询，并且范围内存在记录，会对符合条件的记录加 next-key 或者 record 锁，对剩余未加锁的间隙的下一条记录加 gap 锁</p>
+</blockquote>
+<p>不过有一种特殊情况，执行<code>SELECT * FROM student WHERE id &gt; 29 AND id &lt;= 36  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/ab269093-242f-4402-806c-7578811caeb0.png" alt="图片丢失"></p>
+<p>按理来说不应该给<code>(36,supremum]</code>加锁，</p>
+<p>在《MySQL 实战 45 讲》中作者给行锁加锁规则总结了“两个原则”、“两个优化”和“一个 bug”（《MySQL 实战 45 讲》的作者说的是截止到当时最新的 MySQL 版本：5.x 系列&lt;=5.7.24，8.0 系列 &lt;=8.0.13），其中的一个 bug 就是<code>唯一索引上的范围查询会访问到不满足条件的第一个值为止</code>，也就是在上面的例子中虽然扫描到了<code>id=36</code>的索引，还要继续向后扫描，所以还要对<code>supremum</code>加 next-key 锁（虽然 MySQL 说在 8.0.18 版本已经修复这个<a href="https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-18.html#mysqld-8-0-18-bug">bug（关键词 Bug #29508068）</a>，但是对于一部分的查询还是有这个 bug，就如上面的例子的之后的非主键唯一索引和非唯一索引范围查询）。</p>
+<h4 id="主键索引范围查询并且范围内不存在记录"><a href="#主键索引范围查询并且范围内不存在记录" class="headerlink" title="主键索引范围查询并且范围内不存在记录"></a>主键索引范围查询并且范围内不存在记录</h4><p>执行<code>SELECT * FROM student WHERE id &gt; 33 AND id &lt; 36  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/6d1288fa-2ceb-4711-9aaf-8584a3807370.png" alt="图片丢失"></p>
+<blockquote>
+<p>这里得出的结论是：使用主键索引范围查询，并且范围内不存在记录，会对查询条件所在范围的下一条记录加 gap 锁</p>
+</blockquote>
+<p>有一种特殊情况，执行<code>SELECT * FROM student WHERE id &gt; 36  LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/9491a311-71c6-4039-bca6-e7dd98b1777d.png" alt="图片丢失"></p>
+<p>这里可以也是上面说的不需要降级所以给加的是 next-key 锁</p>
+<h4 id="非主键唯一索引等值查询存在的记录"><a href="#非主键唯一索引等值查询存在的记录" class="headerlink" title="非主键唯一索引等值查询存在的记录"></a>非主键唯一索引等值查询存在的记录</h4><p>执行<code>SELECT * FROM  student WHERE name = &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/4490b333-318b-42ba-9fda-607d2b4ad766.png" alt="图片丢失"></p>
+<blockquote>
+<p>这里得出的结论是：使用非主键唯一索引等值查询，并且这条记录存在时，会对非主键唯一索引上查到的记录加 record 锁，还会给对应的主键索引的记录加上 record 锁</p>
+</blockquote>
+<p>还有特殊情况，执行<code>SELECT id, name FROM  student WHERE name = &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/576a14f9-3236-4720-95cb-7cf1792464ee.png" alt="图片丢失"></p>
+<p>执行<code>SELECT id, name FROM  student WHERE name = &#39;刘备4&#39; FOR UPDATE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/1b0f1423-384d-49f0-be14-fce1180fe5c4.png" alt="图片丢失"></p>
+<p>发现如果只是使用共享锁并且是索引覆盖查询是不需要对主键索引对于的记录加 record 锁的，但是排它锁查询是不管是否索引覆盖都给对应的主键索引加 record 锁</p>
+<h4 id="非主键唯一索引等值查询不存在的记录"><a href="#非主键唯一索引等值查询不存在的记录" class="headerlink" title="非主键唯一索引等值查询不存在的记录"></a>非主键唯一索引等值查询不存在的记录</h4><p>执行<code>SELECT * FROM  student WHERE name = &#39;刘备3&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/1bc2fbd1-a28b-481c-ad09-f9d6c10c34c3.png" alt="图片丢失"></p>
+<blockquote>
+<p>这里得出的结论是：使用非主键唯一索引等值查询，并且这条记录不存在时，会对非主键唯一索引上查询条件所在间隙的下一条记录加 gap 锁</p>
+</blockquote>
+<p>又是锁不需要降级所以是加 next-key 锁的特殊情况，执行<code>SELECT * FROM  student  WHERE name = &#39;鲁班1&#39; LOCK IN SHARE MODE;</code></p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/47d81669-5483-470e-8fc7-3f2a21290ee0.png" alt="图片丢失"></p>
+<h4 id="非主键唯一索引范围查询并且范围内存在记录"><a href="#非主键唯一索引范围查询并且范围内存在记录" class="headerlink" title="非主键唯一索引范围查询并且范围内存在记录"></a>非主键唯一索引范围查询并且范围内存在记录</h4><p>执行<code>SELECT * FROM student WHERE name &gt; &#39;刘备&#39; AND name  &lt; &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/6d95ab7e-29f5-4e16-8e3a-1c018a4a9ec1.png" alt="图片丢失"></p>
+<p>执行<code>SELECT * FROM student WHERE name &gt;= &#39;刘备&#39; AND name  &lt; &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/07af74a7-f66a-4457-a55d-e0ad997f621e.png" alt="图片丢失"></p>
+<p>执行<code>SELECT * FROM student WHERE name &gt; &#39;刘备&#39; AND name  &lt; &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/8356246f-0d6f-4052-bd98-3df6ed9f9169.png" alt="图片丢失"></p>
+<p>执行<code>SELECT * FROM student WHERE name &gt;= &#39;刘备&#39; AND name  &lt;= &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/50752f4c-2867-4b53-b329-109900a34107.png" alt="图片丢失"></p>
+<p>如果只是看非主键唯一索引加锁的情况会发现 bug</p>
+<ol>
+<li><code>name &lt; &#39;刘备4&#39;</code>原本应该锁的是<code>(刘备2,刘备4)</code>，但是现在多出了一个 record 锁，变成了<code>(刘备2,刘备4]</code></li>
+<li><code>name &lt;= &#39;刘备4</code>原本应该锁的是<code>(刘备2,刘备4]</code>，但是现在多出来一个<code>(刘备4,刘永]</code></li>
+<li><code>name &gt; &#39;刘备&#39;</code>原本应该就只是给<code>刘备</code>这条记录加 record 锁，但是多出来了一个 gap 锁，变成了<code>(关羽,刘备]</code></li>
+</ol>
+<p>这就是前面<a href="#主键索引范围查询并且范围内存在记录">主键索引范围查询并且范围内存在记录</a>中说的那个 bug 导致的</p>
+<p>然后再看主键索引上的加锁情况发现主键索引上加锁是正常的</p>
+<ol>
+<li><code>name &lt; &#39;刘备4&#39;</code>在非主键唯一索引上加锁的范围是<code>(刘备2,刘备4]</code>，但是主键索引上并未对<code>刘备4</code>对应的记录 record 锁</li>
+<li><code>name &lt;= &#39;刘备4</code>在非主键唯一索引上加锁的范围是<code>(刘备4,刘永]</code>，但是主键索引上并未对<code>刘永</code>对应的记录 record 锁</li>
+</ol>
+<blockquote>
+<p>这里得出的结论是：使用非主键唯一索引范围查询，并且范围内存在记录，会对符合条件的记录加 next-key（上面的<code>name &gt; &#39;刘备&#39;</code>的 bug），会对不满足条件的第一个值记录加上 next-key 锁（上面的<code>name &lt; &#39;刘备4&#39;</code>和<code>name &lt;= &#39;刘备4</code>），在主键索引上，会对在查询范围内记录对应的主键索引上加 record 锁</p>
+</blockquote>
+<p>而且上面的这个现象还和你索引的排序有关，如果你执行把索引<code>idx_name</code>改成降序，再执行<code>SELECT * FROM student WHERE name &gt;= &#39;刘备&#39; AND name  &lt;= &#39;刘备4&#39; LOCK IN SHARE MODE;</code>，加锁就会变成下面这种情况：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/39a63219-66d9-4b2a-8daf-4c9aabf7418f.png" alt="图片丢失"></p>
+<h4 id="非主键唯一索引范围查询并且范围内不存在记录"><a href="#非主键唯一索引范围查询并且范围内不存在记录" class="headerlink" title="非主键唯一索引范围查询并且范围内不存在记录"></a>非主键唯一索引范围查询并且范围内不存在记录</h4><p>执行<code>SELECT * FROM student WHERE name &gt; &#39;刘备1&#39; AND name  &lt; &#39;刘备2&#39; LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/f8826f9d-af4f-4a66-b2b7-d94701627f82.png" alt="图片丢失"></p>
+<p>这里面加锁逻辑其实和上面的<code>非主键唯一索引范围查询并且范围内存在记录</code>加锁的一样的，都有那个 bug 的问题，区别就是查不到记录所以不会给主键索引加锁</p>
+<blockquote>
+<p>这里得出的结论是：使用非主键唯一索引范围查询，并且范围内不存在记录，会对查询条件所在间隙的下一条记录加 next-key 锁</p>
+</blockquote>
+<h4 id="非唯一索引等值查询存在的记录"><a href="#非唯一索引等值查询存在的记录" class="headerlink" title="非唯一索引等值查询存在的记录"></a>非唯一索引等值查询存在的记录</h4><p>执行<code>SELECT * FROM student  WHERE age = 12 LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/047e975d-6d32-43c6-a67c-3c922b07be34.png" alt="图片丢失"></p>
+<blockquote>
+<p>这里得出的结论是：使用非唯一索引等值查询，并且这条记录存在时，在非唯一索引上，会对符合查询条件的记录加 next-key 锁，会对不满足条件的第一个值记录加上 gap 锁，在主键索引上，对符合查询条件的记录在主键索引对应的位置上加 reocrd 锁</p>
+</blockquote>
+<h4 id="非唯一索引等值查询不存在的记录"><a href="#非唯一索引等值查询不存在的记录" class="headerlink" title="非唯一索引等值查询不存在的记录"></a>非唯一索引等值查询不存在的记录</h4><p>执行<code>SELECT * FROM student  WHERE age = 18 LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/9916c64d-cbe9-405e-b97d-115e19365c96.png" alt="图片丢失"></p>
+<blockquote>
+<p>这里得出的结论是：使用非唯一索引等值查询，并且这条记录不存在时，在非唯一索引上，会对符合查询条件所在间隙的下一条记录加 gap 锁</p>
+</blockquote>
+<p>这里也有那个锁没降级的情况，不在赘述了</p>
+<h4 id="非唯一索引范围查询并且范围内存在记录"><a href="#非唯一索引范围查询并且范围内存在记录" class="headerlink" title="非唯一索引范围查询并且范围内存在记录"></a>非唯一索引范围查询并且范围内存在记录</h4><p>执行<code>SELECT * FROM student WHERE age &gt;= 12 AND age  &lt; 13   LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/cdd437a0-a423-48b0-9610-44a2dd404680.png" alt="图片丢失"></p>
+<p>执行<code>SELECT * FROM student WHERE age &gt; 12 AND age  &lt;= 13   LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/79f05fb8-1ef3-47c7-85ef-26a132633e81.png" alt="图片丢失"></p>
+<p>执行<code>SELECT * FROM student WHERE age &gt;= 12 AND age  &lt;= 13   LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/fccc49cd-e996-4ffe-bc23-55782c25618f.png" alt="图片丢失"></p>
+<p>如果只是看非唯一索引加锁的情况会发现 bug</p>
+<ol>
+<li><code>age &lt; 13</code>原本应该锁的是<code>(12,13)</code>，但是现在多出了一个 record 锁变成了<code>(12,13]</code></li>
+<li><code>age &lt;= 13</code> 原本应该锁的是<code>(12,13]</code>，但是现在多出了一个 next-key 锁<code>(13,17]</code></li>
+</ol>
+<p>这就是前面<a href="#主键索引范围查询并且范围内存在记录">主键索引范围查询并且范围内存在记录</a>中说的那个 bug 导致的</p>
+<p>然后再看主键索引上的加锁情况发现主键索引上加锁是正常的</p>
+<ol>
+<li><code>age &lt; 13&#39;</code>在非唯一索引上加锁的范围是<code>(12,13]</code>，但是主键索引上并未对<code>13</code>对应的记录 record 锁</li>
+<li><code>age &lt;= 13</code>在非唯一索引上加锁的范围是<code>(13,17]</code>，但是主键索引上并未对<code>17</code>对应的记录 record 锁</li>
+</ol>
+<blockquote>
+<p>这里得出的结论是：使用非唯一索引范围查询，并且范围内存在记录，会对符合条件的记录加 next-key，会对不满足条件的第一个值记录加上 next-key 锁（上面的<code>age &lt; 13&#39;</code>和<code>age &lt;= 13</code>），在主键索引上，会对在查询范围内记录对应的主键索引上加 record 锁</p>
+</blockquote>
+<p>不过这里要说一下<code>age &gt; 12</code>的情况，因为 age 是 12 的有多条，但是这里<code>(12,13]</code>的 12 这条记录对应的是 id 最大的那条，这里对应的就是 id=28 的这条，原因也很简单因为我的索引是升序排序的，如果相同的情况下会根据 id 再升序排序，如果你这里把索引的排序改成降序，那么索引值相同的情况下还是会根据 id 升序排序，下面把 age 的排序改成降序，执行<code>SELECT * FROM student WHERE age &gt; 12 AND age  &lt;= 13   LOCK IN SHARE MODE;</code>后加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/c49389f4-961f-4b0c-9439-bbfe60a26f11.png" alt="图片丢失"></p>
+<p>如果是 age 相同的情况下是按照 id 降序的话，这里应该锁显示的 LOCK_DATA 显示的是<code>12,28</code></p>
+<p>所以根据上面的情况可以发现<code>age &gt; 12</code>并且索引升序的情况下可以插入 age=12 的记录只是要求 id 小于最大的值就行，在这里就是 id 小于 28，<code>age &lt; 13</code>也是一样的逻辑只是变成 id 要大于最小值</p>
+<h4 id="非唯一索引范围查询并且范围内不存在记录"><a href="#非唯一索引范围查询并且范围内不存在记录" class="headerlink" title="非唯一索引范围查询并且范围内不存在记录"></a>非唯一索引范围查询并且范围内不存在记录</h4><p>执行<code>SELECT * FROM student WHERE age &gt; 12 AND age  &lt; 13   LOCK IN SHARE MODE;</code>，加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/94efc14e-425a-47b2-888d-61b164c33474.png" alt="图片丢失"></p>
+<p>这里面加锁逻辑其实和上面的<code>非唯一索引范围查询并且范围内存在记录</code>加锁的一样的，都有那个 bug 的问题，区别就是查不到记录所以不会给主键索引加锁</p>
+<blockquote>
+<p>这里得出的结论是：使用非唯一索引范围查询，并且范围内不存在记录，会对查询条件所在间隙的下一条记录加 next-key 锁</p>
+</blockquote>
+<h4 id="不使用索引查询"><a href="#不使用索引查询" class="headerlink" title="不使用索引查询"></a>不使用索引查询</h4><p>分别执行</p>
+<p><code>SELECT id,name FROM student WHERE test1 = 2 LOCK IN SHARE MODE;</code></p>
+<p><code>SELECT id,name FROM student WHERE test1 &gt; 2 LOCK IN SHARE MODE;</code></p>
+<p>加锁情况如下：</p>
+<p><img src="https://cdn.jsdelivr.net/gh/OUZHANBO/pics/img/45ecd17d-db88-41d8-8575-70912179079f.png" alt="图片丢失"></p>
+<p>这里图片截不全，表中每一条记录包括最大界限伪记录 supremum 都加了锁 next-key 锁</p>
+<blockquote>
+<p>这里得出的结论是：不使用索引查询时，无论是等值查询还是范围查询，无论是否存在查询结果，都会对表中所有的记录加 next-key 锁，也就是我们常说的“锁表”</p>
+</blockquote>
+]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
